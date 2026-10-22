@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Scoreboard State Schema",
+  "description": "Contrato estricto para validar el state.json actualizado manualmente antes de propagarlo al controlador.",
+  "type": "object",
+  "properties": {
+    "our_score": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Puntuación actual de nuestro equipo."
+    },
+    "enemy_score": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Puntuación actual del equipo rival."
+    },
+    "time_remaining_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tiempo restante de la competición en segundos."
+    },
+    "enemy_solving_rate": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Tasa estimada de resolución del enemigo (puntos por minuto)."
+    },
+    "enemy_current_target_digits": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Tamaño en dígitos del objetivo actual del enemigo, si se conoce."
+    },
+    "max_broken_bits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mayor tamaño (bits) que el rival ha factorizado. Dispara el kill-switch de GNFS en el controlador si supera d_safe_bits."
+    }
+  },
+  "required": [
+    "our_score",
+    "enemy_score",
+    "time_remaining_seconds"
+  ],
+  "additionalProperties": false
+}

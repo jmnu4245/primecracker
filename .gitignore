@@ -1,0 +1,31 @@
+# Secretos / entorno
+.env
+
+# Artefactos de ejecución (se regeneran en cada corrida)
+runtime/
+*.log
+factor.json
+state.json
+
+# Datos y binarios pesados (no versionar)
+*.dat
+siqs.dat
+# Toolchain compilada (~800 MB): se regenera con build/extract.sh
+bin/
+build/*.o
+
+# Toolchain descargada / compilada
+vendor/*.tar.xz
+vendor/*.git/
+
+# Temporales y caché
+__pycache__/
+*.pyc
+*.pyo
+tmp.txt
+prueba.py
+*.bak
+
+# Resultados de benchmark locales (opcional: coméntalo si quieres versionarlos)
+# benchmark_results.csv
+.pytest_cache/
