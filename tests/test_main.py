@@ -175,3 +175,22 @@ def test_lo_parcial_se_conserva_para_la_segunda_pasada(fake_pipeline):
     # 30 se ataca una sola vez; la segunda pasada reintenta solo el 15
     assert calls == [30, 15, 15]
     assert "30" not in written(tmp_path)
+
+
+def test_plan_budget_suma_el_pretest_ecm_ante_gnfs(monkeypatch):
+    monkeypatch.setattr(main.os, "cpu_count", lambda: 12)
+    _, estimate = main.plan_budget(10 ** 100, 10 ** 6, fixed_predictor(1000), anchor_threads=12)
+    assert estimate == 1000 + main.SETTINGS.ecm_pretest_seconds
+    _, estimate = main.plan_budget(10 ** 80, 10 ** 6, fixed_predictor(1000), anchor_threads=12)
+    assert estimate == 1000                                     # YAFU: sin pretest
+
+
+def test_flush_registra_lo_escrito_justo_antes_del_apagado(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "target_numbers.txt").write_text("30\n")
+    (tmp_path / "runtime" / "factor_found_cleanup_30.json").write_text(
+        json.dumps({"n": "30", "factors": ["2", "3", "5"], "method": "Combinado"}))
+    main.flush_pending_results()
+    assert "N (2 dígitos) = 30" in (tmp_path / "runtime" / "para_entregar.txt").read_text()

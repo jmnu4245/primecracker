@@ -34,7 +34,7 @@ def ops(actions):
 CFG = Config(total_threads=12, ecm_min_threads=2, gnfs_min_threads=6,
              ram_critical_pct=90.0, temp_critical_c=85.0, cpu_headroom_pct=85.0,
              d_safe_bits=330, variance_abort_minute=20, deadline_minutes=60,
-             finish_margin_minutes=4)
+             finish_margin_minutes=4, enemy_kill_switch=True, aimd=True)
 
 
 # ----------------------- regla 1: recursos críticos -----------------------
@@ -182,3 +182,20 @@ def test_loop_ignora_proyeccion_de_otro_objetivo(runtime):
 def test_temperatura_desconocida_no_dispara_ni_rompe():
     c = ctx(resources={"cpu_percent": 50, "ram_percent": 40, "temperature": None}, ecm_threads=3)
     assert ops(decide(c, CFG)) == [("ecm", "resize", 4)]
+
+
+# ----------------------- reglas opcionales desactivadas -----------------------
+
+def test_por_defecto_sin_kill_switch_ni_aimd():
+    from dataclasses import replace
+    cfg = replace(CFG, enemy_kill_switch=False, aimd=False)
+    assert decide(ctx(enemy_state={"max_broken_bits": 1000}), cfg) == []
+    assert decide(ctx(ecm_threads=3), cfg) == []
+    # Las de seguridad siguen activas
+    hot = ctx(resources={"cpu_percent": 50, "ram_percent": 95, "temperature": 60})
+    assert ("gnfs", "kill", None) in ops(decide(hot, cfg))
+    late = ctx(gnfs_elapsed_minutes=25, gnfs_projected_finish_minute=58)
+    assert ("gnfs", "kill", None) in ops(decide(late, cfg))
+
+def test_config_por_defecto_desactiva_ambas():
+    assert Config().enemy_kill_switch is False and Config().aimd is False

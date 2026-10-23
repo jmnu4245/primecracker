@@ -25,7 +25,8 @@ def test_clave_desconocida_es_error(tmp_path):
 
 def test_hilos_automaticos(monkeypatch):
     monkeypatch.setattr(settings.os, "cpu_count", lambda: 12)
-    assert settings.Settings().threads() == (12, 6, 2)
+    assert settings.Settings().threads() == (12, 12, 2)          # ancla: todos
+    assert settings.Settings(ecm_parallel=True).threads() == (12, 6, 2)
     monkeypatch.setattr(settings.os, "cpu_count", lambda: 2)
-    assert settings.Settings().threads() == (2, 1, 1)
+    assert settings.Settings().threads() == (2, 2, 1)
     assert settings.Settings(anchor_threads=3).threads() == (2, 3, 1)

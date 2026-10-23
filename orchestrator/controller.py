@@ -59,7 +59,11 @@ class Config:
     temp_critical_c: float = 90.0
     cpu_headroom_pct: float = 85.0
     staleness_seconds: float = 120.0
-    d_safe_bits: int = 330 
+    d_safe_bits: int = 330
+    # Reglas opcionales (settings.toml): la 2 depende de actualizar
+    # state.json a mano; la 4 solo tiene sentido con ECM en paralelo.
+    enemy_kill_switch: bool = False
+    aimd: bool = False
     # Plazo del objetivo actual (main.py crea un ControlLoop por objetivo y
     # ajusta estos tres a su presupuesto de tiempo).
     variance_abort_minute: float = 20
@@ -107,7 +111,7 @@ def decide(ctx: ControlContext, cfg: Config) -> List[Action]:
             return actions
 
     # 2) Kill-switch matemático: el rival rompió algo mayor que nuestro D_safe.
-    if ctx.enemy_state is not None and ctx.gnfs_running:
+    if cfg.enemy_kill_switch and ctx.enemy_state is not None and ctx.gnfs_running:
         enemy_max_bits = ctx.enemy_state.get("max_broken_bits", 0)
         if enemy_max_bits > cfg.d_safe_bits:
             actions.append(Action("gnfs", "kill",
@@ -130,7 +134,7 @@ def decide(ctx: ControlContext, cfg: Config) -> List[Action]:
 
     # 4) Estado estable: AIMD sobre el cazador (ECM). El ancla mantiene su
     #    asignación base; el cazador crece/decrece según la contención real.
-    if ctx.resources is not None:
+    if cfg.aimd and ctx.resources is not None:
         cpu = ctx.resources.get("cpu_percent", 100)
         max_ecm = cfg.total_threads - cfg.gnfs_min_threads
         if cpu < cfg.cpu_headroom_pct:

@@ -182,3 +182,11 @@ class BaseWorker:
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
+
+    def busy(self) -> bool:
+        """El proceso corre o su monitor aún no ha terminado. Tras encontrar
+        un factor, _write_success mata el proceso y después descompone en
+        primos (hasta SPLIT_SECONDS) antes de señalar `found`: en ese hueco
+        is_running() ya es False pero el resultado está a punto de llegar."""
+        monitor = getattr(self, "thread", None)
+        return self.is_running() or (monitor is not None and monitor.is_alive())

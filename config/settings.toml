@@ -6,11 +6,20 @@
 # Binarios (ecm_bin, yafu_bin, cado-nfs/)
 # toolchain_dir = "bin/active"
 
-# Hilos. 0 = automático según los núcleos del equipo:
-# ancla (YAFU/GNFS) la mitad, ECM como mínimo una sexta parte.
+# Hilos. 0 = automático según los núcleos del equipo: el ancla (YAFU/GNFS)
+# usa todos (la mitad si ecm_parallel = true).
 # total_threads = 0
 # anchor_threads = 0
-# ecm_min_threads = 0
+# ecm_min_threads = 0           # solo con ecm_parallel
+
+# Pretest de ECM antes de GNFS (factores de hasta ~30 dígitos en segundos)
+# ecm_pretest_b1 = 250000
+# ecm_pretest_curves = 450
+# ecm_pretest_seconds = 120     # 0 = sin pretest
+
+# Modos antiguos (ver settings.py)
+# ecm_parallel = false          # ECM junto al ancla todo el ataque, con AIMD
+# enemy_kill_switch = false     # abortar GNFS si el rival supera d_safe_bits
 
 # Límites del controlador
 # ram_critical_pct = 90.0

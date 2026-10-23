@@ -167,6 +167,8 @@ def plan_budget(target, remaining_seconds, predictor, anchor_threads):
         estimate *= (os.cpu_count() or anchor_threads) / anchor_threads
     except Exception:          # sin datos suficientes para ese método
         return min(SETTINGS.default_target_seconds, remaining_seconds), None
+    if anchor_method(target) == "CADO-NFS" and not SETTINGS.ecm_parallel:
+        estimate += SETTINGS.ecm_pretest_seconds
     budget = max(estimate * SETTINGS.budget_margin, SETTINGS.min_target_seconds)
     return (budget if budget <= remaining_seconds else None), estimate
 
@@ -191,14 +193,51 @@ def release(worker, keep_workdir=False):
         worker.kill()
 
 
+def ecm_pretest(target, ecm_worker, threads, max_seconds):
+    """ECM corto con todos los núcleos antes de GNFS. Devuelve los factores
+    si encuentra alguno, o None. Cubre los números "débiles" de CTF (un
+    factor de hasta ~30 dígitos) por segundos, frente a los minutos u horas
+    que costaría GNFS sobre el número entero."""
+    seconds = min(SETTINGS.ecm_pretest_seconds, max_seconds * 0.25)
+    if seconds <= 0:
+        return None
+    log.info(f"[*] Pretest ECM: B1={SETTINGS.ecm_pretest_b1}, "
+             f"{SETTINGS.ecm_pretest_curves} curvas, {threads} hilos, máx. {seconds:.0f}s.")
+    ecm_worker.TOTAL_CURVES = SETTINGS.ecm_pretest_curves
+    ecm_worker.start(target, threads=threads, b1=SETTINGS.ecm_pretest_b1, timeout=int(seconds) + 1)
+    deadline = time.time() + seconds
+    # busy() y no is_running(): ver BaseWorker.busy
+    while ecm_worker.busy() and time.time() < deadline:
+        if ecm_worker.found.wait(1):
+            break
+    ecm_worker.kill()
+    if ecm_worker.found.is_set():
+        log.info(f"[+] El pretest ECM encontró un factor: {ecm_worker.result}")
+        return ecm_worker.result
+    log.info("[*] Pretest ECM sin factor: se pasa a GNFS.")
+    return None
+
+
 def attack_target(target, cfg, anchor_worker, ecm_worker, loop, max_seconds):
     """Ataca un único objetivo hasta resolverlo o agotar max_seconds.
     Devuelve los factores encontrados (quizá con compuestos) o None. No
-    libera el ancla: lo decide quien llama."""
-    log.info(f"\n{'='*60}\n[*] OBJETIVO: {target} ({len(str(target))} dígitos) "
-          f"-- {anchor_worker.method_name} + ECM, {max_seconds / 60:.1f} min\n{'='*60}")
+    libera el ancla: lo decide quien llama.
 
-    ecm_worker.start(target, threads=cfg.ecm_min_threads)
+    Por defecto el ancla trabaja sola con todos los núcleos; ante GNFS, la
+    precede un pretest de ECM corto. Con ecm_parallel (settings.toml), ECM
+    corre junto al ancla todo el tiempo y el controlador reparte hilos."""
+    log.info(f"\n{'='*60}\n[*] OBJETIVO: {target} ({len(str(target))} dígitos) "
+          f"-- {anchor_worker.method_name}, {max_seconds / 60:.1f} min\n{'='*60}")
+    deadline = time.time() + max_seconds
+
+    if SETTINGS.ecm_parallel:
+        ecm_worker.start(target, threads=cfg.ecm_min_threads)
+    elif anchor_method(target) == "CADO-NFS" and not getattr(anchor_worker, "snapshot", None):
+        # (sin snapshot: si se reanuda en la segunda pasada, el pretest ya se hizo)
+        factors = ecm_pretest(target, ecm_worker, cfg.total_threads, max_seconds)
+        if factors:
+            return factors
+
     snapshot = getattr(anchor_worker, "snapshot", None)
     if snapshot and os.path.exists(snapshot):
         log.info(f"[*] Reanudando {anchor_worker.method_name} desde la pasada anterior.")
@@ -206,7 +245,6 @@ def attack_target(target, cfg, anchor_worker, ecm_worker, loop, max_seconds):
     else:
         anchor_worker.start(target, threads=cfg.gnfs_min_threads)
 
-    deadline = time.time() + max_seconds
     result = None
     while time.time() < deadline:
         loop.tick()
@@ -219,8 +257,8 @@ def attack_target(target, cfg, anchor_worker, ecm_worker, loop, max_seconds):
                 break
         if result:
             break
-        if not anchor_worker.is_running() and not ecm_worker.is_running():
-            log.warning("[!] Ambos workers terminaron sin factor -- pasando al siguiente.")
+        if not anchor_worker.busy() and not ecm_worker.busy():
+            log.warning("[!] El ancla terminó sin factor -- pasando al siguiente.")
             break
         time.sleep(loop.tick_seconds)
 
@@ -246,8 +284,13 @@ def run_control_loop(remaining_numbers, total_seconds, services=None):
     base_cfg = Config(total_threads=total, ecm_min_threads=ecm_min, gnfs_min_threads=anchor_threads,
                       d_safe_bits=SETTINGS.d_safe_bits, ram_critical_pct=SETTINGS.ram_critical_pct,
                       temp_critical_c=SETTINGS.temp_critical_c,
-                      cpu_headroom_pct=SETTINGS.cpu_headroom_pct)
-    log.info(f"[*] Hilos: {total} en total, {anchor_threads} para el ancla, ECM desde {ecm_min}.")
+                      cpu_headroom_pct=SETTINGS.cpu_headroom_pct,
+                      enemy_kill_switch=SETTINGS.enemy_kill_switch,
+                      aimd=SETTINGS.ecm_parallel)
+    if SETTINGS.ecm_parallel:
+        log.info(f"[*] Hilos: {total} en total, {anchor_threads} para el ancla, ECM en paralelo desde {ecm_min}.")
+    else:
+        log.info(f"[*] Hilos: {anchor_threads} para el ancla (ECM solo como pretest antes de GNFS).")
     deadline_at = time.time() + total_seconds
     anchors = {}         # objetivo -> ancla, para reanudar en la 2ª pasada
     solved = set()
@@ -383,7 +426,18 @@ def main():
                 p.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 p.kill()
+        flush_pending_results()
         log.info("[+] Shutdown completo. Adiós.")
+
+
+def flush_pending_results():
+    """Registra lo que quede en runtime/ sin procesar. Un resultado escrito
+    justo antes del apagado (p.ej. la factorización combinada de un
+    sub-objetivo) llegaba después de parar el collector y no aparecía en
+    para_entregar.txt hasta la siguiente corrida. Se hace con el collector
+    ya parado, para que no lo procesen dos procesos a la vez."""
+    from submitter.collector import FactorCollector
+    FactorCollector().process_existing(RUNTIME_DIR)
 
 
 if __name__ == "__main__":

@@ -244,3 +244,15 @@ def test_gnfs_kill_mata_clientes_demonizados_solo_de_su_workdir(in_tmp):
         for p in (daemon, other):
             p.kill()
             p.wait()
+
+
+def test_busy_cubre_el_hueco_entre_kill_y_found(in_tmp):
+    import threading
+    w = BaseWorker("t", "Test")
+    assert not w.busy()
+    # Simula _write_success a medias: proceso ya muerto, monitor descomponiendo.
+    w.thread = threading.Thread(target=time.sleep, args=(1,))
+    w.thread.start()
+    assert not w.is_running() and w.busy()
+    w.thread.join()
+    assert not w.busy()
