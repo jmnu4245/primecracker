@@ -25,54 +25,81 @@ El código usa vocabulario de competición. Significa esto y solo esto:
 | `scoreboard`         | El marcador público de la competición. |
 | `vulnerability_sweep`| Barrido de **debilidades matemáticas conocidas** del propio número de reto (Fermat, GCD, potencia perfecta), para resolverlo rápido sin gastar cómputo pesado. |
 | `attack` / atacar    | Lanzar los factorizadores (ECM, GNFS) contra un número de reto. |
-| `auto_submit`        | Entrega del resultado. En este repo está **simulada** (imprime y registra; no envía nada a ningún servicio externo). |
+| `collector`          | Recoge y valida los resultados para entregarlos **a mano** (no envía nada a ningún sitio). |
 
 ## Arquitectura
 
 Pipeline por fases con un bucle de control central (`main.py`):
 
 1. **Pre-flight** (`build/setup_toolchain.sh`): verifica la toolchain compilada
-   (CADO-NFS, GMP-ECM, YAFU) en `bin/active/`.
-2. **Fase 0 — barrido** (`screening/vulnerability_sweep.py`): detecta debilidades
-   estructurales en segundos (GCD cruzado, potencia perfecta, Fermat, trial division +
-   Pollard p-1). Lo resuelto se aparta; el resto se ordena de menor a mayor.
+   (CADO-NFS, GMP-ECM, YAFU) y enlaza en `bin/active/` la variante que funciona
+   en este CPU.
+2. **Fase 0 — barrido** (`screening/vulnerability_sweep.py`): debilidades
+   estructurales en segundos (GCD cruzado, potencia perfecta, Fermat, trial
+   division, Pollard p-1 y rho). Solo da por resuelto lo que queda **completo en
+   primos**; lo demás pasa a los workers.
 3. **Servicios en background**: monitor de recursos, observador del marcador y
-   entregador de resultados (`orchestrator/`, `submitter/`).
-4. **Bucle de control** (`orchestrator/controller.py`): reparte hilos entre los
-   factorizadores y decide cuándo pararlos, según recursos y marcador.
-5. **Workers** (`workers/`): adaptadores sobre las herramientas de factorización CLI.
-6. **Modelo de coste** (`benchmark/predict_cost.py`): estima tiempo/RAM por tamaño.
+   recolector de resultados (`orchestrator/`, `submitter/`). Si uno cae, se
+   relanza al empezar el siguiente objetivo.
+4. **Reparto del tiempo** (`main.py`): cada objetivo recibe un presupuesto según
+   su coste estimado (`benchmark/predict_cost.py`); lo que no cabe se pospone.
+   Una segunda pasada reintenta lo pospuesto y lo no resuelto con el tiempo que
+   quede, reanudando GNFS desde su criba.
+5. **Bucle de control** (`orchestrator/controller.py`): reparte hilos entre el
+   ancla y ECM (AIMD), y la para si hay RAM/temperatura críticas, si el rival
+   supera `d_safe_bits` o si la ETA de la criba de CADO no llega al plazo.
+6. **Workers** (`workers/`): adaptadores sobre las herramientas CLI, cada uno
+   en su propio directorio de trabajo bajo `runtime/`.
 
 Por objetivo, el "ancla" se elige por tamaño: **YAFU (SIQS)** por debajo de
-95 dígitos y **CADO-NFS (GNFS)** desde ahí (`GNFS_MIN_DIGITS` en `main.py`);
-GMP-ECM corre siempre en paralelo. Cuando el controlador redimensiona GNFS,
-este reanuda desde el *parameter snapshot* de CADO en vez de empezar de cero.
+`gnfs_min_digits` y **CADO-NFS (GNFS)** desde ahí; GMP-ECM corre siempre en
+paralelo. Si un worker devuelve un factor compuesto, se ataca como
+sub-objetivo y se registra la factorización combinada.
 
 ## Uso
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt     # Python >= 3.11
 # Coloca los enteros de reto, uno por línea, en data/target_numbers.txt
-python main.py
+python main.py                      # tiempo: time_remaining_seconds de state.json
+python main.py --minutes 45         # o explícito
+python main.py --log-level WARNING  # consola más callada (el archivo lo guarda todo)
 ```
 
-- **Log**: toda la corrida (incluidos los servicios) queda en
-  `runtime/primecracker.log` con marca de tiempo.
-- **Reanudación**: lo ya entregado se registra en `runtime/solved_history.jsonl`
+- **Configuración**: `config/settings.toml` (hilos, límites, umbral YAFU/GNFS,
+  reparto del tiempo, ruta de la toolchain). Todo opcional; una clave mal
+  escrita hace fallar el arranque.
+- **Log**: `runtime/primecracker.log`, con fecha, nivel y módulo por línea
+  (incluidos los servicios y las excepciones no controladas).
+- **Entrega (manual)**: la entrega es por Outlook con la cuenta de la
+  organización y no se puede automatizar. Cada resultado válido se anota en
+  **`runtime/para_entregar.txt`** (número y factores, listo para copiar) y se
+  anuncia en consola como `[ENTREGAR A MANO]`. Solo se anotan factorizaciones
+  completas en primos de números que estén en `data/target_numbers.txt` (se
+  relee cada vez). Lo parcial se aparta
+  en `runtime/partial/` y lo que no es objetivo en `runtime/ignored/`.
+- **Reanudación**: lo ya registrado queda en `runtime/solved_history.jsonl`
   y no se vuelve a atacar en la siguiente corrida.
-- **Antes de cada competición, vacía `runtime/`**: al arrancar, el submitter
-  entrega también los `factor_found_*.json` que hayan quedado de corridas o
-  pruebas anteriores.
+
+## Benchmark
+
+```bash
+python -m benchmark.run_benchmark --start 60 --stop 100 --step 5 \
+    --methods YAFU CADO-NFS --threads 12 --timeout 3600
+```
+
+Añade filas a `benchmark_results.csv`, de donde sale la estimación de coste.
+Mide con todos los núcleos (`--threads`), sin contar el tiempo que el equipo
+esté suspendido.
 
 ## Tests
 
 ```bash
-pytest -q                    # todo (≈7 s)
-pytest -q -m "not integration"   # sin los binarios reales de bin/active
+pip install -r requirements-dev.txt
+pytest -q                          # todo (≈10 s)
+pytest -q -m "not integration"     # sin los binarios reales de bin/active (como en CI)
+python -m scripts.smoke_workers    # prueba manual de los 3 binarios con RSA-100
 ```
-
-`test_workers.py` en la raíz es un smoke test manual (lanza los tres
-binarios sobre RSA-100); pytest no lo recoge.
 
 ## Ámbito y uso aceptable
 

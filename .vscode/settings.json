@@ -1,3 +1,3 @@
 {
-    "cmake.sourceDirectory": "/home/jm/proyectos/primecracker/src/cado-nfs"
+    "cmake.sourceDirectory": "${workspaceFolder}/bin/active/cado-nfs"
 }

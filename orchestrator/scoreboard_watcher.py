@@ -1,7 +1,10 @@
+import logging
 import json
 import time
 import os
 from jsonschema import validate, ValidationError
+
+log = logging.getLogger(__name__)
 
 os.makedirs("runtime", exist_ok=True)
 
@@ -11,7 +14,7 @@ if os.path.exists("config/state_schema.json"):
         SCHEMA = json.load(f)
 
 def main():
-    print("[*] Iniciando State Watcher...")
+    log.info("[*] Iniciando State Watcher...")
     while True:
         try:
             if os.path.exists("state.json"):
@@ -30,9 +33,11 @@ def main():
                 os.replace(tmp_file, final_file)
                 
         except (json.JSONDecodeError, ValidationError) as e:
-            print(f"Error de validación/lectura: {e}")
+            log.error(f"Error de validación/lectura: {e}")
         
         time.sleep(2)
 
 if __name__ == "__main__":
+    import log_setup
+    log_setup.install_service()
     main()

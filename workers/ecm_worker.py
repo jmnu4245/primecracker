@@ -2,6 +2,7 @@ import math
 import re
 import shlex
 import threading
+from settings import SETTINGS
 from workers.base_worker import BaseWorker
 
 
@@ -10,7 +11,7 @@ class ECMWorker(BaseWorker):
     # paralelo dentro del mismo grupo de proceso (kill() los mata a todos).
     # Antes `threads` se ignoraba y cada resize() relanzaba el mismo proceso
     # único, perdiendo progreso sin ganar paralelismo.
-    BINARY = "bin/active/ecm_bin"
+    BINARY = SETTINGS.binary("ecm_bin")
     TOTAL_CURVES = 50
 
     def __init__(self):

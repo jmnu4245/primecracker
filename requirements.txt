@@ -1,8 +1,13 @@
-psutil>=5.9.0
-jsonschema>=4.17.0
-watchdog>=3.0.0
-scipy>=1.10.0
-numpy>=1.24.0
-flask>=2.3.0
-python-dotenv>=1.0.0
-pytest>=7.4.0
+# Dependencias de ejecución (Python >= 3.11: settings.py usa tomllib).
+# Versiones exactas con las que está probado el proyecto.
+jsonschema==4.23.0
+numpy==2.3.5
+psutil==7.0.0
+scipy==1.18.1
+watchdog==6.0.0
+
+# No las importa este proyecto, sino CADO-NFS (cado-nfs.py y su cliente
+# corren con este mismo Python): su servidor de tareas usa Flask/Werkzeug y
+# el cliente, requests. Sin ellas GNFS no arranca.
+flask==3.1.3
+requests==2.34.2

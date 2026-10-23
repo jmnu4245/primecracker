@@ -33,7 +33,8 @@ def ops(actions):
 
 CFG = Config(total_threads=12, ecm_min_threads=2, gnfs_min_threads=6,
              ram_critical_pct=90.0, temp_critical_c=85.0, cpu_headroom_pct=85.0,
-             d_safe_bits=330, variance_abort_minute=20, ctf_duration_minutes=60)
+             d_safe_bits=330, variance_abort_minute=20, deadline_minutes=60,
+             finish_margin_minutes=4)
 
 
 # ----------------------- regla 1: recursos críticos -----------------------
@@ -159,3 +160,25 @@ def test_loop_tolera_json_corrupto(runtime):
     (path / "resources.json").write_text("{a medio escribir")
     _, actions = ControlLoop(CFG, gnfs=FakeWorker(6), ecm=FakeWorker(2), runtime_dir=str(path)).tick()
     assert actions == []
+
+
+def test_loop_proyeccion_del_mismo_objetivo(runtime):
+    path, write = runtime
+    gnfs = FakeWorker(6)
+    gnfs.current_n = 10403
+    loop = ControlLoop(CFG, gnfs=gnfs, ecm=FakeWorker(6), runtime_dir=str(path))
+    write("gnfs_progress.json", {"target_n": "10403",
+                                 "projected_finish_at": loop._start_time + 30 * 60})
+    assert loop._build_context().gnfs_projected_finish_minute == pytest.approx(30)
+
+def test_loop_ignora_proyeccion_de_otro_objetivo(runtime):
+    path, write = runtime
+    gnfs = FakeWorker(6)
+    gnfs.current_n = 10403
+    loop = ControlLoop(CFG, gnfs=gnfs, ecm=FakeWorker(6), runtime_dir=str(path))
+    write("gnfs_progress.json", {"target_n": "999", "projected_finish_at": loop._start_time + 90 * 60})
+    assert loop._build_context().gnfs_projected_finish_minute is None
+
+def test_temperatura_desconocida_no_dispara_ni_rompe():
+    c = ctx(resources={"cpu_percent": 50, "ram_percent": 40, "temperature": None}, ecm_threads=3)
+    assert ops(decide(c, CFG)) == [("ecm", "resize", 4)]

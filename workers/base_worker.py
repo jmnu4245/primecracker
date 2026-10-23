@@ -1,3 +1,4 @@
+import logging
 import math
 import subprocess
 import threading
@@ -5,6 +6,10 @@ import json
 import os
 import signal
 import time
+
+from workers.quick_factor import split_to_primes
+
+log = logging.getLogger(__name__)
 
 
 class BaseWorker:
@@ -30,18 +35,23 @@ class BaseWorker:
         self._generation = 0
         self._last_resize_time = 0.0
         # Canal de resultado en memoria: quien orquesta consulta `found` en
-        # vez de vigilar runtime/ por glob (auto_submit borra esos archivos
+        # vez de vigilar runtime/ por glob (el collector borra esos archivos
         # tras procesarlos, así que el glob podía no verlos nunca).
         self.result = None
+        self.result_path = None
         self.found = threading.Event()
         os.makedirs("runtime", exist_ok=True)
 
-    def _start_process(self, cmd, stdin_data=None, timeout=3600):
+    # Duraciones y timeouts con time.monotonic(): en Linux no avanza
+    # mientras el equipo está suspendido. Con time.time(), una suspensión de
+    # 12h en mitad de un benchmark se medía como 12h de cómputo y el
+    # watchdog mataba el proceso al despertar.
+    def _start_process(self, cmd, stdin_data=None, timeout=3600, cwd=None):
         """Lanza el proceso y devuelve su generación. Los _monitor de cada
         subclase deben pasarla a _write_success para que un monitor de un
         proceso ya reemplazado por resize() no pueda dar éxito (ni matar
         al proceso nuevo)."""
-        self.start_time = time.time()
+        self.start_time = time.monotonic()
         self.timeout = timeout
         self._generation += 1
         my_generation = self._generation
@@ -56,6 +66,7 @@ class BaseWorker:
             text=True,
             bufsize=1,
             start_new_session=True,  # grupo de proceso propio -- ver kill()
+            cwd=cwd,
         )
 
         if stdin_data:
@@ -73,30 +84,42 @@ class BaseWorker:
 
     def _watchdog_loop(self, generation):
         while self._generation == generation and self.is_running():
-            if time.time() - self.start_time > self.timeout:
-                print(f"[!] {self.method_name} excedió el timeout de {self.timeout}s. Abortando.")
+            if time.monotonic() - self.start_time > self.timeout:
+                log.warning(f"[!] {self.method_name} excedió el timeout de {self.timeout}s. Abortando.")
                 self.kill()
                 break
             time.sleep(1)
 
+    # Tiempo para descomponer en primos los factores compuestos que dé la
+    # herramienta (p.ej. ECM da un factor y un cofactor sin mirar si es primo).
+    SPLIT_SECONDS = 5.0
+
     def _write_success(self, n: int, factors: list, generation=None) -> bool:
         """Registra un resultado solo si es una factorización no trivial y
         exacta de n. Devuelve False (sin efectos) si no lo es o si viene de
-        un proceso de una generación ya reemplazada."""
+        un proceso de una generación ya reemplazada.
+
+        `result` queda descompuesto en primos hasta donde lo permiten los
+        métodos baratos; `complete` dice si lo está del todo. Si no, main.py
+        ataca los compuestos que queden como sub-objetivos."""
         if generation is not None and generation != self._generation:
             return False
         factors = [int(f) for f in factors]
         if len(factors) < 2 or any(f <= 1 for f in factors) or math.prod(factors) != n:
-            print(f"[{self.method_name}] [!] Factorización descartada: "
+            log.warning(f"[{self.method_name}] [!] Factorización descartada: "
                   f"{factors} no es una factorización no trivial de {n}.")
             return False
 
+        self.kill()  # antes de descomponer: no tiene sentido que siga en CPU
+        primes, composites = split_to_primes(factors, seconds=self.SPLIT_SECONDS)
+        factors = primes + composites
         payload = {
             "target_id": self.target_id,
             "n": str(n),
             "factors": [str(f) for f in factors],
+            "complete": not composites,
             "method": self.method_name,
-            "time_elapsed_seconds": round(time.time() - self.start_time, 4),
+            "time_elapsed_seconds": round(time.monotonic() - self.start_time, 4),
         }
         # Milisegundos: con segundos, dos éxitos del mismo worker en el
         # mismo segundo se pisaban el archivo.
@@ -106,7 +129,7 @@ class BaseWorker:
             json.dump(payload, f, indent=2)
         os.replace(tmp_filename, final_filename)
         self.result = factors
-        self.kill()
+        self.result_path = final_filename
         self.found.set()  # después de kill(): quien vea found ya ve el proceso parado
         return True
 
@@ -119,16 +142,16 @@ class BaseWorker:
         if threads == self.current_threads:
             return
 
-        elapsed = time.time() - self._last_resize_time
+        elapsed = time.monotonic() - self._last_resize_time
         if elapsed < self.MIN_RESIZE_INTERVAL:
-            print(f"[{self.method_name}] resize({threads}) en cooldown "
+            log.info(f"[{self.method_name}] resize({threads}) en cooldown "
                   f"({elapsed:.0f}s/{self.MIN_RESIZE_INTERVAL:.0f}s) -- ignorado.")
             return
 
-        self._last_resize_time = time.time()
+        self._last_resize_time = time.monotonic()
         # Si se pierde o no el progreso depende de _restart_with(): GNFS
         # reanuda desde su snapshot, ECM vuelve a lanzar curvas nuevas.
-        print(f"[{self.method_name}] Reiniciando con {threads} hilos...")
+        log.info(f"[{self.method_name}] Reiniciando con {threads} hilos...")
         self.kill()
         self._restart_with(threads)
 
@@ -155,7 +178,7 @@ class BaseWorker:
         try:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            print(f"[{self.method_name}] [!] El proceso no terminó 5s después de SIGKILL.")
+            log.warning(f"[{self.method_name}] [!] El proceso no terminó 5s después de SIGKILL.")
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None

@@ -156,3 +156,91 @@ def test_yafu_real_sin_terminal(monkeypatch):
     w.start(20000000000000000900000000000000009, threads=2, timeout=60)
     assert w.found.wait(60)
     assert sorted(w.result) == [100000000000000003, 200000000000000003]
+
+
+# ----------------------- GNFS: proyección de fin -----------------------
+
+from workers.gnfs_worker import parse_eta_line, project_finish_at, POST_SIEVE_FACTOR
+
+def test_parse_eta_line_con_ansi_y_dia_de_un_digito():
+    line = ("\x1b[32;1mInfo\x1b[0m:Lattice Sieving: Marking workunit c100_sieving_1000-2000 "
+            "as ok (35.2% => ETA Thu Oct  3 01:23:45 2026)")
+    phase, pct, eta = parse_eta_line(line)
+    assert (phase, pct) == ("Lattice Sieving", 35.2)
+    assert (eta.day, eta.hour, eta.minute) == (3, 1, 23)
+
+def test_parse_eta_line_ignora_otras_lineas():
+    assert parse_eta_line("Info:Lattice Sieving: param rels_wanted is 3600000") is None
+    assert parse_eta_line("Info:Square Root: Factors: 101 103") is None
+
+def test_project_finish_at_suma_la_cola_tras_la_criba():
+    sieve_start = 1000.0
+    eta = sieve_start + 1200                  # 20 min de criba
+    assert project_finish_at(eta, sieve_start) == pytest.approx(eta + POST_SIEVE_FACTOR * 1200)
+
+def test_project_finish_at_eta_anterior_al_inicio_no_resta():
+    assert project_finish_at(500.0, 1000.0) == 500.0
+
+
+# ----------------------- YAFU con binario falso -----------------------
+
+FAKE_YAFU = r'''#!/bin/bash
+read expr
+n=$(echo "$expr" | tr -dc '0-9')
+# Más de 64 KB de salida: con el pipe sin leer, YAFU se bloqueaba aquí.
+head -c 200000 /dev/zero | tr '\0' 'x'; echo
+printf '{"input-decimal":"%s","factors-prime":["101","103"]}' "$n" > factor.json
+'''
+
+def test_yafu_no_se_bloquea_con_mucha_salida_y_usa_su_directorio(in_tmp, monkeypatch):
+    path = in_tmp / "fake_yafu"
+    path.write_text(FAKE_YAFU)
+    path.chmod(0o755)
+    monkeypatch.setattr(YAFUWorker, "BINARY", str(path))
+    w = YAFUWorker()
+    w.start(10403, threads=2, timeout=30)
+    assert w.found.wait(10)
+    assert w.result == [101, 103]
+    assert not (in_tmp / "factor.json").exists()        # nada en el directorio actual
+    workdir = w.workdir
+    assert os.path.exists(os.path.join(workdir, "factor.json"))
+    w.discard_workdir()
+    assert not os.path.exists(workdir)
+
+def test_yafu_borra_siqs_dat_al_reiniciar(in_tmp, monkeypatch):
+    path = in_tmp / "fake_yafu"
+    path.write_text("#!/bin/bash\nsleep 30\n")
+    path.chmod(0o755)
+    monkeypatch.setattr(YAFUWorker, "BINARY", str(path))
+    w = YAFUWorker()
+    w.start(10403, threads=2, timeout=60)
+    (open(os.path.join(w.workdir, "siqs.dat"), "w")).write("truncado")
+    w.MIN_RESIZE_INTERVAL = 0
+    w.resize(4)
+    assert not os.path.exists(os.path.join(w.workdir, "siqs.dat"))
+    w.discard_workdir()
+
+
+# ----------------------- GNFS: clientes demonizados de CADO -----------------------
+
+def test_gnfs_kill_mata_clientes_demonizados_solo_de_su_workdir(in_tmp):
+    from workers.gnfs_worker import GNFSWorker
+    workdir = str(in_tmp / "cado_wd")
+    client = in_tmp / "cado-nfs-client.py"
+    client.write_text("import time\ntime.sleep(60)\n")
+    import sys
+    # Como CADO: sesión propia (fuera del grupo de proceso del worker).
+    daemon = subprocess.Popen([sys.executable, str(client), "--basepath", workdir + "/client"],
+                              start_new_session=True)
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", workdir],
+                             start_new_session=True)
+    try:
+        w = GNFSWorker()
+        w.workdir = workdir
+        w.kill()                       # sin proceso propio: solo limpia clientes
+        assert daemon.wait(timeout=5) is not None
+        assert other.poll() is None    # menciona la ruta pero no es cliente de CADO
+    finally:
+        for p in (daemon, other):
+            p.kill()
+            p.wait()

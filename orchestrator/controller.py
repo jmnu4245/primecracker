@@ -16,18 +16,21 @@ es matar y relanzar con otros hilos, con cooldown (MIN_RESIZE_INTERVAL)
 en el propio worker, que puede ignorar un resize() -- por eso los hilos
 actuales se leen del worker (`current_threads`) y no se llevan aquí.
 
-La regla 3 (aborto por varianza) necesita `projected_finish_minute` en
-runtime/gnfs_progress.json, que gnfs_worker.py aún no calcula: hoy esa
-regla no se dispara nunca.
+La regla 3 (aborto por varianza) usa `projected_finish_at` de
+runtime/gnfs_progress.json, que gnfs_worker.py estima a partir de la ETA
+de la criba de CADO. Con YAFU como ancla no hay proyección y no aplica.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Protocol
+
+log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------
@@ -57,8 +60,11 @@ class Config:
     cpu_headroom_pct: float = 85.0
     staleness_seconds: float = 120.0
     d_safe_bits: int = 330 
-    variance_abort_minute: int = 20
-    ctf_duration_minutes: int = 60
+    # Plazo del objetivo actual (main.py crea un ControlLoop por objetivo y
+    # ajusta estos tres a su presupuesto de tiempo).
+    variance_abort_minute: float = 20
+    deadline_minutes: float = 60
+    finish_margin_minutes: float = 4
 
 
 @dataclass
@@ -89,9 +95,9 @@ def decide(ctx: ControlContext, cfg: Config) -> List[Action]:
 
     # 1) Prioridad máxima: recursos críticos. Manda sobre cualquier otra regla.
     if ctx.resources is not None:
-        ram = ctx.resources.get("ram_percent", 0)
-        temp = ctx.resources.get("temperature", 0)
-        if ram >= cfg.ram_critical_pct or temp >= cfg.temp_critical_c:
+        ram = ctx.resources.get("ram_percent") or 0
+        temp = ctx.resources.get("temperature")   # None: sin sensor de CPU
+        if ram >= cfg.ram_critical_pct or (temp is not None and temp >= cfg.temp_critical_c):
             if ctx.gnfs_running:
                 actions.append(Action("gnfs", "kill",
                     reason=f"RAM={ram}% temp={temp}C por encima del límite crítico"))
@@ -114,7 +120,7 @@ def decide(ctx: ControlContext, cfg: Config) -> List[Action]:
     if (ctx.gnfs_running
             and ctx.gnfs_elapsed_minutes >= cfg.variance_abort_minute
             and ctx.gnfs_projected_finish_minute is not None
-            and ctx.gnfs_projected_finish_minute > cfg.ctf_duration_minutes - 4):
+            and ctx.gnfs_projected_finish_minute > cfg.deadline_minutes - cfg.finish_margin_minutes):
         actions.append(Action("gnfs", "kill",
             reason=(f"proyección de fin en minuto "
                     f"{ctx.gnfs_projected_finish_minute:.1f} no converge a tiempo")))
@@ -160,7 +166,7 @@ class ControlLoop:
             return None
         age = time.time() - os.path.getmtime(path)
         if age > self.cfg.staleness_seconds:
-            print(f"[controller] {filename} obsoleto ({age:.1f}s) — ignorado")
+            log.info(f"[controller] {filename} obsoleto ({age:.1f}s) — ignorado")
             return None
         try:
             with open(path) as f:
@@ -171,6 +177,11 @@ class ControlLoop:
     def _build_context(self) -> ControlContext:
         elapsed = (time.time() - self._start_time) / 60
         gnfs_progress = self._read_json_if_fresh("gnfs_progress.json") or {}
+        projected = None
+        # El archivo puede ser del objetivo anterior (sigue "fresco" un rato).
+        if (gnfs_progress.get("target_n") == str(getattr(self.gnfs, "current_n", None))
+                and gnfs_progress.get("projected_finish_at") is not None):
+            projected = (gnfs_progress["projected_finish_at"] - self._start_time) / 60
         return ControlContext(
             resources=self._read_json_if_fresh("resources.json"),
             enemy_state=self._read_json_if_fresh("enemy_state.json"),
@@ -178,13 +189,13 @@ class ControlLoop:
             ecm_running=self.ecm.is_running(),
             ecm_threads=self.ecm.current_threads,
             gnfs_elapsed_minutes=elapsed,
-            gnfs_projected_finish_minute=gnfs_progress.get("projected_finish_minute"),
+            gnfs_projected_finish_minute=projected,
         )
 
     def _apply(self, actions: List[Action]):
         for action in actions:
             worker = self.gnfs if action.worker == "gnfs" else self.ecm
-            print(f"[controller] {action.worker}.{action.op}"
+            log.info(f"[controller] {action.worker}.{action.op}"
                   f"({action.value if action.value is not None else ''}) — {action.reason}")
             if action.op == "kill":
                 worker.kill()

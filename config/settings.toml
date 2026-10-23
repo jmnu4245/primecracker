@@ -1,0 +1,26 @@
+# Ajustes operativos de primecracker (ver settings.py).
+# Todo es opcional: lo que falte toma el valor por defecto. Una clave
+# desconocida hace fallar el arranque, para que una errata no pase
+# desapercibida.
+
+# Binarios (ecm_bin, yafu_bin, cado-nfs/)
+# toolchain_dir = "bin/active"
+
+# Hilos. 0 = automático según los núcleos del equipo:
+# ancla (YAFU/GNFS) la mitad, ECM como mínimo una sexta parte.
+# total_threads = 0
+# anchor_threads = 0
+# ecm_min_threads = 0
+
+# Límites del controlador
+# ram_critical_pct = 90.0
+# temp_critical_c = 85.0
+# cpu_headroom_pct = 85.0
+# d_safe_bits = 330
+
+# Elección de método y reparto del tiempo
+# gnfs_min_digits = 93          # desde aquí GNFS en vez de YAFU (cruce medido)
+# total_minutes = 60            # sin --minutes ni time_remaining_seconds en state.json
+# default_target_seconds = 180  # si no hay predicción del benchmark para el método
+# min_target_seconds = 60
+# budget_margin = 1.5           # holgura sobre la estimación del benchmark
