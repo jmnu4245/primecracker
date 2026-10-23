@@ -121,6 +121,11 @@ class FactorCollector(FileSystemEventHandler):
                 os.makedirs(IGNORED_DIR, exist_ok=True)
                 shutil.move(path, os.path.join(IGNORED_DIR, filename))
                 return
+            # Duplicado antes que parcial: un resultado parcial tardío (p.ej.
+            # ECM terminando justo después de que YAFU registrara la
+            # factorización completa) no queda como pendiente en partial/.
+            elif str(n) in self._recorded:
+                log.info(f"[*] {n} ya registrado; se descarta duplicado de {payload.get('method')}.")
             elif not all(is_probable_prime(int(f)) for f in factors):
                 # Se comprueba aquí en vez de fiarse de payload["complete"].
                 # main.py escribirá la factorización completa cuando
@@ -130,8 +135,6 @@ class FactorCollector(FileSystemEventHandler):
                 os.makedirs(PARTIAL_DIR, exist_ok=True)
                 shutil.move(path, os.path.join(PARTIAL_DIR, filename))
                 return
-            elif str(n) in self._recorded:
-                log.info(f"[*] {n} ya registrado; se descarta duplicado de {payload.get('method')}.")
             else:
                 record(payload)
                 self._recorded.add(str(n))

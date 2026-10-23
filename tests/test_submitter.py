@@ -165,3 +165,12 @@ def test_linea_de_entrega_legible(runtime):
     text = (tmp_path / "runtime" / "para_entregar.txt").read_text()
     assert "N (5 dígitos) = 10403" in text
     assert "factores: 101 * 103    [YAFU]" in text
+
+
+def test_parcial_tardio_de_un_numero_ya_registrado_es_duplicado(runtime):
+    tmp_path, drop, sent = runtime
+    sub = FactorCollector()
+    sub.process(drop("factor_found_yafu.json", 30, [2, 3, 5]))
+    sub.process(drop("factor_found_ecm.json", 30, [2, 15]))      # llega después
+    assert len(sent) == 1
+    assert not (tmp_path / "runtime" / "partial").exists()
