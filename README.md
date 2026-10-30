@@ -95,10 +95,33 @@ Al arrancar, `main.py` ejecuta `build/setup_toolchain.sh`, que prueba `native` y
 `portable` (detecta `SIGILL` si la CPU no soporta las instrucciones) y enlaza la que
 funcione en `bin/active`.
 
-### 2.4 Comprobar la instalación
+### 2.4 Calibración de la máquina
+
+Las estimaciones de coste salen del benchmark de un i7-9750H (6 núcleos / 12 hilos,
+2,6 GHz, **turbo desactivado**). En otra máquina, `main.py` mide al arrancar su velocidad
+relativa: factoriza con YAFU un número fijo de 70 dígitos (~15 s) y lo compara con la
+referencia (6,5 s). El factor resultante (`<1` = más rápida) escala todas las
+estimaciones. Se guarda en `config/machine.json` y se repite solo si cambian la CPU, los
+hilos o la frecuencia máxima, que es lo que pasa al activar o desactivar el turbo. Para
+verlo sin lanzar nada:
 
 ```bash
-pytest -q                          # 123 tests en ~10 s, 2 con los binarios reales
+python -m benchmark.machine
+```
+
+Si YAFU falla, se usa una estimación por núcleos × GHz (un hilo de SMT cuenta como 0,25
+de núcleo). Es mucho menos precisa: no capta la arquitectura, la memoria ni el turbo
+real, y puede desviarse un 30–50%.
+
+> **Turbo:** comprueba `cat /sys/devices/system/cpu/intel_pstate/no_turbo` (1 =
+> desactivado). Activarlo durante el CTF puede acelerar bastante la factorización, a
+> cambio de más temperatura. El controlador para el ancla si la CPU pasa de
+> `temp_critical_c`.
+
+### 2.5 Comprobar la instalación
+
+```bash
+pytest -q                          # 151 tests en ~10 s, 2 con los binarios reales
 python -m scripts.smoke_workers    # arranca, redimensiona y para ECM, YAFU y CADO
 ```
 
@@ -107,17 +130,32 @@ python -m scripts.smoke_workers    # arranca, redimensiona y para ECM, YAFU y CA
 ## 3. Uso durante el CTF
 
 1. **Objetivos**: pega los números en `data/target_numbers.txt`, uno por línea (se
-   ignoran comentarios `#` y duplicados). Puedes añadir más con el programa en marcha:
-   el recolector relee el archivo.
-2. **Tiempo disponible**: `--minutes N`, o pon `time_remaining_seconds` en `state.json`
-   (se descuenta lo que haya pasado desde que lo guardaste), o el valor por defecto de
-   `config/settings.toml` (60 min).
-3. **Lanza**:
+   ignoran comentarios `#` y duplicados). `main.py` ataca los que hay **al arrancar**: si
+   se publican retos nuevos a mitad, añádelos y **relanza** (lo ya resuelto no se repite).
+2. **Tiempo disponible**: `--minutes N` (recomendado). Si no, `time_remaining_seconds`
+   de `state.json` (se descuenta lo que haya pasado desde que lo guardaste), o el valor
+   por defecto de `config/settings.toml` (60 min).
+3. **Marcador** (opcional, pero es lo que permite decidir contra quién compites): copia
+   en `state.json` las longitudes que el marcador muestra de cada rival:
+   ```json
+   {
+     "leaderboard": {
+       "equipo_a": [120, 95, 90],
+       "equipo_b": [{"digits": 110, "minute": 12}, 100]
+     }
+   }
+   ```
+   Tus propias longitudes no hacen falta: salen de lo que ya has resuelto. El minuto del
+   CTF en que lo rompió (`minute`) es opcional y activa la señal de "en ese grupo hay un
+   número débil" ([6.6](#66-qué-atacar-la-estrategia)). Se relee cada vez que se decide
+   qué atacar, así que basta con actualizarlo cuando cambie el marcador. Si no cumple
+   `config/state_schema.json`, el observador registra un error en el log.
+4. **Lanza**:
    ```bash
    python main.py --minutes 120
    python main.py --minutes 120 --log-level WARNING   # consola más callada
    ```
-4. **Entrega a mano**: la entrega del CTF es por Outlook con la cuenta de la
+5. **Entrega a mano**: la entrega del CTF es por Outlook con la cuenta de la
    organización y no se puede automatizar. Cada resultado válido aparece en consola como
    `[ENTREGAR A MANO]` y se anota en **`runtime/para_entregar.txt`**:
    ```
@@ -127,8 +165,17 @@ python -m scripts.smoke_workers    # arranca, redimensiona y para ECM, YAFU y CA
    Solo se anotan factorizaciones **completas en primos** (verificadas: producto exacto y
    Miller-Rabin) de números que estén en la lista de objetivos, y cada número una sola
    vez.
-5. **Si se corta** (Ctrl-C, cuelgue, batería): vuelve a lanzar. Lo ya registrado en
+6. **Si se corta** (Ctrl-C, cuelgue, batería): vuelve a lanzar. Lo ya registrado en
    `runtime/solved_history.jsonl` no se repite.
+
+En el log verás el razonamiento de cada decisión:
+
+```
+[estrategia] Tu marcador: (80,); puesto esperado 2.0 de 2.
+[estrategia] Para superar a rival (80, 70) necesitas romper al menos un número de 71 dígitos.
+[estrategia]   79 dígitos ×1: ~1 min, P(terminar)=1.00, puestos +1.00
+[estrategia]   70 dígitos ×3: ~0 min, P(terminar)=1.00, puestos +0.50
+```
 
 **Qué hay en `runtime/`** (no versionado):
 
@@ -153,6 +200,7 @@ números que coincidan por casualidad.
 
 | Clave | Por defecto | Qué hace |
 |---|---|---|
+| `strategy` | `longest` | `longest`: gana el número más largo roto ([6.6](#66-qué-atacar-la-estrategia)). `count`: cuantos más números, mejor |
 | `toolchain_dir` | `bin/active` | Dónde están `ecm_bin`, `yafu_bin`, `cado-nfs/` |
 | `total_threads` | `0` (= núcleos lógicos) | Hilos de la máquina |
 | `anchor_threads` | `0` (= todos) | Hilos de YAFU/CADO |
@@ -180,11 +228,12 @@ data/target_numbers.txt
  Fase 0: barrido (segundos) ──► resuelto completo en primos ──┐
    GCD cruzado, potencia perfecta,                             │
    trial division, p−1, rho, Fermat                            │
-        │ lo que queda, de menor a mayor                       │
+        │ lo que queda                                         │
         ▼                                                      │
- Reparto del tiempo: presupuesto = coste estimado × 1.5        │
-   ¿no cabe? → se pospone a la 2.ª pasada                      │
-        │                                                      │
+ Estrategia (state.json): ¿qué tamaño sube más mi puesto?      │
+   utilidad = P(terminar a tiempo) × puestos ganados           │
+   grupo grande → caza del débil con ECM antes de GNFS         │
+        │      (se vuelve a decidir tras cada número roto)     │
         ▼                                                      │
   < 93 dígitos: YAFU (todos los núcleos)                       │
  ≥ 93 dígitos: pretest ECM ──► CADO-NFS (todos los núcleos)    │
@@ -198,7 +247,7 @@ data/target_numbers.txt
 
 En paralelo corren tres servicios: el **monitor de recursos** (CPU, RAM y temperatura
 de la CPU), el **observador del marcador** (`state.json`) y el **recolector**. Si uno
-cae, se relanza.
+cae, se relanza al empezar el siguiente objetivo.
 
 El **controlador** (`orchestrator/controller.py`) revisa cada 5 s y para el ancla si:
 - la RAM o la temperatura superan el límite;
@@ -233,8 +282,8 @@ grandes está en medio. **N** es el número a factorizar y **p** su menor factor
 | SIQS (YAFU) | L_N[1/2, 1] | N | < 93 dígitos |
 | GNFS (CADO-NFS) | L_N[1/3, (64/9)^{1/3} ≈ 1.923] | N | ≥ 93 dígitos |
 
-La distinción clave: **rho, p−1 y ECM dependen del tamaño del menor factor p**, mientras
-que **SIQS y GNFS dependen solo de N**. Un número de 300 dígitos con un factor de 20 cae
+La distinción clave: **rho y ECM dependen del tamaño del menor factor p** (y p−1, de
+que p−1 sea suave), mientras que **SIQS y GNFS dependen solo de N**. Un número de 300 dígitos con un factor de 20 cae
 en segundos con ECM; un semiprimo equilibrado de 110 dígitos no le da a ECM ninguna
 ventaja.
 
@@ -250,8 +299,8 @@ minutos u horas:
   árbol de productos.
 - **Fermat.** Empieza en a = ⌈√N⌉ y busca a² − N = b². Con p y q a distancia
   Δ = q − p hacen falta ≈ Δ²/(8√N) iteraciones, así que 10⁵ iteraciones detectan
-  Δ ≲ 900·N^{1/4}. Para un N de 100 dígitos son primos que coinciden en su mitad alta
-  de dígitos.
+  Δ ≲ 900·N^{1/4}. Para un N de 100 dígitos son primos de 50 dígitos que coinciden en
+  sus ~22 primeros dígitos.
 - **p−1 de Pollard.** Encuentra p si todos los factores primos de p−1 son ≤ B. Es una
   debilidad clásica de los primos "a mano".
 - **Potencia perfecta.** Se prueban raíces k-ésimas exactas por bisección.
@@ -264,7 +313,8 @@ pasa a los workers.
 ### 6.4 YAFU o CADO: el cruce medido
 
 Asintóticamente GNFS (L[1/3]) gana a SIQS (L[1/2]), pero sus constantes son mucho
-peores: el cruce teórico suele situarse en torno a 95-100 dígitos. En este equipo, con
+peores: en la práctica el cruce se suele citar en torno a 95-100 dígitos, y depende de
+la implementación y de la máquina. En este equipo, con
 12 hilos:
 
 | Dígitos | YAFU (SIQS) | CADO-NFS (GNFS) |
@@ -285,8 +335,8 @@ $$T(d) = t_0 + \exp\left(a + c \cdot (\ln N)^{\alpha} (\ln\ln N)^{1-\alpha}\righ
 con α = 1/2 para SIQS y 1/3 para GNFS. El término **t₀ es el coste fijo de arranque**:
 ~1.6 s en YAFU y ~26 s en CADO, que levanta un servidor y sus clientes. Sin él, los
 números pequeños (casi todo arranque) aplanaban la curva y el modelo estimaba 34 s para
-YAFU con 90 dígitos cuando tardaba 253 s. El ajuste actual se desvía como mucho un ~20%
-en el rango medido; `budget_margin = 1.5` lo cubre.
+YAFU con 90 dígitos cuando tardaba 253 s. El ajuste actual se desvía como mucho un ~30%
+en el rango medido (YAFU a 80 dígitos); `budget_margin = 1.5` lo cubre.
 
 **Teoría frente a medida.** Por cada 10 dígitos más, L[1/3, 1.923] crece ×5.6 (de 90 a
 100) y L[1/2, 1] ×8.5. Lo medido es ×3.2 para CADO y ×7.1 para YAFU. GNFS crece aún por
@@ -307,7 +357,8 @@ Pero un número de CTF de 100 dígitos puede ser `p₂₀ × q₄₀ × r₄₀`
 hay un **pretest acotado**: 450 curvas con B1 = 250 000, que es el número esperado de
 curvas para un factor de 30 dígitos. Da ~63% (1 − 1/e) de acertar uno de 30 dígitos y
 casi seguro uno de 20 o 25. Medido sobre 100 dígitos con 12 hilos: **60 s** para las 450
-curvas (tope configurable: 2 min), frente a los ~17–19 min de GNFS. Si encuentra un
+curvas (tope: 2 min, y nunca más del 25% del presupuesto del objetivo), frente a los
+~17–19 min de GNFS. Si encuentra un
 factor, el cofactor se ataca como sub-objetivo (normalmente con YAFU, que es más
 pequeño). En la prueba de extremo a extremo, `p₂₀ × q₄₀ × r₄₀` (100 dígitos) cayó así en
 ~45 s: ECM dio el p₂₀ y YAFU partió el cofactor de 80 dígitos.
@@ -315,19 +366,70 @@ pequeño). En la prueba de extremo a extremo, `p₂₀ × q₄₀ × r₄₀` (1
 Por debajo de 93 dígitos no hay pretest propio: `factor()` de YAFU ya hace el suyo
 (rho, p−1 y ECM escalonado) antes de SIQS.
 
-### 6.6 Reparto del tiempo
+### 6.6 Qué atacar: la estrategia
 
-- **De menor a mayor coste.** Con un plazo común para todos los trabajos, ordenar por
-  menor tiempo de proceso primero (regla SPT) **maximiza el número de trabajos
-  terminados**. Como cada número resuelto puntúa, es el criterio adecuado.
-- **Presupuesto = coste estimado × 1.5** (más el pretest si es GNFS). Si no cabe en lo
-  que queda, se **pospone** en vez de gastar tiempo en algo que no va a terminar.
-- **Segunda pasada**: lo pospuesto y lo no resuelto se reintentan con todo el tiempo
-  restante. GNFS **reanuda su criba** desde el *parameter snapshot* de CADO en vez de
-  empezar de cero, y los factores parciales encontrados no se pierden.
+**Las reglas del CTF.** Gana quien rompe el número más largo; si hay empate, el
+siguiente más largo, y así sucesivamente; con empate en todo, quien llegó antes. Así que
+cada equipo es un **vector de longitudes rotas ordenado de mayor a menor**, comparado
+**lexicográficamente**:
+
+$$(120, 95) \succ (120, 90) \succ (120) \succ (110, 105, 100)$$
+
+Diez números de 80 dígitos no valen lo que uno de 110. Por eso **ordenar de menor a
+mayor**, que maximiza *cuántos* números rompes, **es la estrategia equivocada** aquí.
+
+**La función de utilidad** (`orchestrator/strategy.py`). Para cada tamaño `d` que queda
+por romper:
+
+$$U(d) = P(T_d \le t_{\text{restante}}) \cdot \big(\text{puesto actual} - \text{puesto si rompes } d\big)$$
+
+- **Puesto.** 1 más el número de rivales cuyo vector supera al tuyo. Un empate exacto
+  cuenta como medio puesto, porque lo decide el tiempo y no sabemos quién llegó antes. El
+  marcador solo enseña las 2–3 mayores longitudes de cada rival: si coincides en ellas,
+  lo de detrás no se ve y también cuenta como empate.
+- **Probabilidad de terminar.** El tiempo real se modela como log-normal alrededor de la
+  estimación del modelo de coste, con σ = 0,3 en ln T (el error medido es de hasta ~30%):
+
+  $$P(T_d \le t) = \Phi\left(\frac{\ln t - \ln \hat{T}_d}{0.3}\right)$$
+
+- **Desempate:** la mejora esperada del propio vector, P · (valor lexicográfico nuevo −
+  actual). Si ningún tamaño cambia el puesto (vas primero, o te faltan dos números para
+  superar a alguien), sigues mejorando tu vector, que es el desempate futuro.
+
+De ahí salen solas las conductas que importan:
+- **"No se gana con menos de X".** Un tamaño que no te hace adelantar a nadie tiene
+  utilidad de puesto 0, y el log dice explícitamente cuál es la longitud mínima que
+  necesitas contra cada rival.
+- **Si vas por detrás, arriesga.** Un número grande con P = 0,3 que te da el primer
+  puesto vale más que uno seguro que no te mueve.
+- **Si vas por delante, asegura.** Lo que suma desempate con alta probabilidad.
+
+**Caza del débil.** Con ~10 números de cada tamaño, dentro de un grupo todos puntúan
+igual: interesa el **más débil**, no uno cualquiera. Antes de dedicar GNFS a un grupo se
+pasa el pretest ECM (~1–2 min) por todos sus números si eso cuesta menos de 1/3 de lo
+que costaría GNFS, o siempre que el marcador lo sugiera: si un rival rompió un tamaño en
+menos del 10% de lo que costaría con GNFS en esta máquina, es casi seguro que encontró
+uno débil. El margen ×10 cubre que el rival tenga más hardware.
+
+**Replanificación.** Tras cada número roto se relee `state.json` y se vuelve a decidir.
+Si GNFS se aborta porque su ETA no llega al final, ese tamaño se descarta (los demás del
+grupo son igual de duros) y se elige otro.
+
+**Límite conocido.** Se mira un paso por delante. Si te faltan dos números para superar a
+alguien, el primero no mejora el puesto por sí solo y decide el desempate. En la
+práctica eso lleva igualmente al tamaño mayor alcanzable.
+
+**Estrategia `count`** (para CTF que puntúan por cantidad): de menor a mayor coste.
+Con un plazo común, ordenar por menor tiempo de proceso primero (regla SPT)
+**maximiza el número de trabajos terminados**. Cada objetivo recibe coste estimado ×
+1,5, lo que no cabe se pospone y una segunda pasada lo reintenta con el tiempo restante.
+
+**En las dos estrategias:**
+- GNFS **reanuda su criba** desde el *parameter snapshot* de CADO cuando se vuelve a un
+  número, y los factores parciales encontrados no se pierden.
 - **Aborto por proyección**: CADO publica la ETA de la criba. El final total se estima
   como ETA + 35% de la duración de la criba (filtrado, álgebra lineal y raíz cuadrada).
-  Si ese final cae fuera del plazo, se para y el tiempo pasa al siguiente objetivo.
+  Si ese final cae fuera del plazo, se para y el tiempo pasa a otro objetivo.
 
 ### 6.7 Verificación de resultados
 
@@ -357,8 +459,9 @@ Por debajo de 93 dígitos no hay pretest propio: `factor()` de YAFU ya hace el s
 
 ## 7. Límites: qué se puede factorizar y qué no
 
-Estimaciones para este equipo (i7-9750H, 12 hilos) en el caso difícil, un semiprimo
-equilibrado. La cota baja sale del modelo ajustado y la alta de aplicar la tasa teórica
+Estimaciones para este equipo (i7-9750H, 12 hilos, turbo desactivado) en el caso
+difícil, un semiprimo equilibrado. En otra máquina, multiplica por su factor de
+calibración ([2.4](#24-calibración-de-la-máquina)). La cota baja sale del modelo ajustado y la alta de aplicar la tasa teórica
 de GNFS (×5 por cada 10 dígitos) desde lo medido a 100.
 
 | Dígitos (bits) | Método | Tiempo estimado | ¿Viable en un CTF? |
@@ -389,8 +492,8 @@ GNFS.
 |---|---|
 | **Linux x86_64** | Soportado (probado en Fedora 43) |
 | Linux ARM64 | No probado. La toolchain se compila con flags x86 (`-march=x86-64-v3`); habría que adaptar el `Dockerfile` |
-| macOS | No: usa `os.killpg`/sesiones de proceso, `stdbuf` (GNU coreutils), `/proc` y sensores de `psutil` específicos de Linux |
-| Windows | No (mismas razones). WSL2 debería funcionar como Linux, sin probar |
+| macOS | No: la toolchain se compila en un contenedor Linux (binarios ELF) y el worker de ECM usa `stdbuf` (GNU coreutils). Habría que compilar GMP-ECM, YAFU y CADO-NFS de forma nativa |
+| Windows | No: además no hay grupos de procesos POSIX (`os.killpg`). WSL2 debería funcionar como Linux, sin probar |
 | Python < 3.11 | No (`tomllib`, sintaxis `X \| None`) |
 | CPU sin AVX2 | La variante `portable` no arranca (`SIGILL`). Compila `native` en esa máquina |
 | Temperatura | Sensores de CPU `coretemp` (Intel), `k10temp`/`zenpower` (AMD), `cpu_thermal` (ARM), `acpitz` como último recurso. Sin ninguno, la regla de temperatura se desactiva con un aviso |
@@ -413,6 +516,11 @@ GNFS.
 | Un objetivo grande se "pospone" y no se ataca | Su coste estimado no cabe en el tiempo restante | Más `--minutes`, o atácalo solo; en la 2.ª pasada recibe todo lo que quede |
 | GNFS se aborta con "proyección… no converge" | La ETA de la criba no llega al plazo | Es intencionado. Con más tiempo, la 2.ª pasada lo reanuda desde la criba |
 | Un número no aparece en `para_entregar.txt` | Factorización incompleta, no es objetivo, o ya anotado | Mira `runtime/partial/`, `runtime/ignored/` y `primecracker.log` |
+| Un reto publicado a mitad no se ataca | `main.py` lee los objetivos al arrancar | Añádelo a `data/target_numbers.txt` y relanza |
+| `Error de validación/lectura` cada 2 s en el log | `state.json` no cumple su schema (p.ej. longitudes entre comillas) | Corrígelo según [3](#3-uso-durante-el-ctf), o bórralo y usa `--minutes` |
+| `Factor de velocidad (núcleos × GHz)` en vez de `(calibración)` | La calibración con YAFU falló | Revisa la toolchain y borra `config/machine.json` para recalibrar |
+| Las estimaciones no cuadran tras activar el turbo | Calibración de antes del cambio | Se recalibra sola si cambia la frecuencia máxima; si no, borra `config/machine.json` |
+| La estrategia no ataca el número que esperabas | Ese tamaño no mejora tu puesto, o no se termina a tiempo | Mira las líneas `[estrategia]` del log: dicen la probabilidad y los puestos de cada tamaño |
 | RAM al límite / el sistema va lento | YAFU o CADO grandes; GNFS guarda relaciones | El controlador para el ancla al 90%; cierra otros programas |
 | El portátil se suspende | Ahorro de energía | Desactiva la suspensión durante el CTF: con la tapa cerrada se para todo |
 | Tiempos del benchmark absurdamente altos | Suspensión durante la medición con una versión antigua | Las mediciones actuales usan reloj monótono; repite el punto afectado |
@@ -450,9 +558,9 @@ suspensiones y sin dejar restos en `runtime/`. Tarda ~1.5 h para 60–100 dígit
 | `main.py` | Punto de entrada: Fase 0, reparto del tiempo, pasadas, sub-objetivos |
 | `screening/vulnerability_sweep.py` | Fase 0 |
 | `workers/` | Adaptadores de ECM, YAFU y CADO; `quick_factor.py`: métodos baratos y primalidad |
-| `orchestrator/` | Controlador, monitor de recursos, observador del marcador |
+| `orchestrator/` | Controlador, estrategia (`strategy.py`), monitor de recursos, observador del marcador |
 | `submitter/collector.py` | Validación y registro para la entrega manual |
-| `benchmark/` | Medición y modelo de coste |
+| `benchmark/` | Medición, modelo de coste y calibración de la máquina (`machine.py`) |
 | `settings.py`, `config/` | Configuración y schema de `state.json` |
 | `build/` | Compilación de la toolchain |
 | `tests/` | Tests (pytest) |
