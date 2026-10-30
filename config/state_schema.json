@@ -38,37 +38,66 @@
       "description": "Mayor tamaño (bits) que el rival ha factorizado. Dispara el kill-switch de GNFS en el controlador si supera d_safe_bits."
     },
     "leaderboard": {
-      "description": "Longitudes que muestra el marcador de cada participante (sus 2-3 mayores): una lista de participantes sin nombre, o un objeto {nombre: [...]}. Cada longitud: dígitos, o {digits, minute} con el minuto del CTF en que se rompió (opcional; activa la señal de número débil).",
+      "description": "El top del marcador: el máximo de dígitos roto por cada participante, p.ej. [120, 110, 110, 95]. Cada valor: dígitos, o {digits, minute} con el minuto del CTF en que se rompió (opcional; activa la señal de número débil). También se acepta una lista por participante o un objeto {nombre: [...]}.",
       "oneOf": [
         {
           "type": "array",
           "items": {
-            "type": "array",
-            "items": {
-              "oneOf": [
-                {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "digits"
-                  ],
-                  "additionalProperties": false,
-                  "properties": {
-                    "digits": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "digits"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "digits": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "minute": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
                       "type": "integer",
                       "minimum": 1
                     },
-                    "minute": {
-                      "type": "number",
-                      "minimum": 0
+                    {
+                      "type": "object",
+                      "required": [
+                        "digits"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "digits": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "minute": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
-              ]
-            }
+              }
+            ]
           }
         },
         {

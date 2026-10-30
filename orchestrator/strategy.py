@@ -6,12 +6,14 @@ Qué atacar, según las reglas del CTF:
 - Gana quien rompe el número MÁS LARGO; si hay empate, se mira el
   siguiente más largo, y así sucesivamente; con empate en todos, gana
   quien llegó antes.
-- El marcador muestra de cada participante (sin nombre) sus 2-3
-  longitudes mayores.
+- El marcador es un top con el máximo de dígitos que ha roto cada
+  participante (sin nombres).
 
-Es decir, cada participante es un vector de longitudes rotas ordenado de mayor a
-menor, comparado lexicográficamente ((120, 95) > (120, 90) > (120,)). Con
-eso, para cada tamaño de número que queda por romper:
+Es decir, cada participante es un vector de longitudes rotas ordenado de
+mayor a menor, comparado lexicográficamente ((120, 95) > (120, 90) >
+(120,)). De los rivales solo se ve el principio del vector (su máximo): si
+coincidimos en lo que se ve, lo de detrás es desconocido y cuenta como
+empate. Con eso, para cada tamaño de número que queda por romper:
 
     utilidad = P(terminarlo a tiempo) × (puestos que se ganan si se rompe)
 
@@ -26,9 +28,6 @@ import json
 import math
 from dataclasses import dataclass
 
-# El marcador muestra hasta este número de longitudes por participante. Si un
-# rival enseña SHOWN y coincidimos en ellas, lo que tenga detrás no se ve.
-SHOWN = 3
 # Error del modelo de coste medido en el benchmark (hasta ~30%): sigma de
 # ln(T) para la distribución log-normal del tiempo real.
 COST_SIGMA = 0.3
@@ -43,20 +42,20 @@ def standing(lengths):
     return tuple(sorted((int(d) for d in lengths), reverse=True))
 
 
-def compare(ours, theirs, shown=SHOWN):
-    """+1 si `ours` va por delante, -1 si por detrás, 0 si empate (o si no
-    se puede saber: el rival enseña `shown` longitudes y coinciden)."""
-    if len(theirs) >= shown:
-        ours = ours[:len(theirs)]
+def compare(ours, theirs):
+    """+1 si `ours` va por delante, -1 si por detrás, 0 si empate o si no se
+    puede saber. `theirs` es lo que se ve del rival (normalmente solo su
+    máximo): si coincidimos en eso, lo que tenga detrás es desconocido."""
+    ours = ours[:len(theirs)]
     return (ours > theirs) - (ours < theirs)
 
 
-def rank(ours, rivals, shown=SHOWN):
+def rank(ours, rivals):
     """Puesto esperado (1 = primero). Empate exacto = medio puesto: gana
     quien llegó antes y no sabemos quién fue."""
     position = 1.0
     for theirs in rivals:
-        c = compare(ours, theirs, shown)
+        c = compare(ours, theirs)
         position += 1.0 if c < 0 else 0.5 if c == 0 else 0.0
     return position
 
@@ -115,13 +114,13 @@ def evaluate_tiers(candidate_digits, ours, rivals, remaining_seconds, estimator,
     return options
 
 
-def needed_to_beat(ours, theirs, max_digits=999, shown=SHOWN):
+def needed_to_beat(ours, theirs, max_digits=999):
     """Menor longitud que, rompiéndola, deja a `ours` por delante de
     `theirs`; None si ninguna basta (o ya vamos por delante)."""
-    if compare(standing(ours), theirs, shown) > 0:
+    if compare(standing(ours), theirs) > 0:
         return None
     for d in range(1, max_digits + 1):
-        if compare(standing(list(ours) + [d]), theirs, shown) > 0:
+        if compare(standing(list(ours) + [d]), theirs) > 0:
             return d
     return None
 
@@ -137,31 +136,30 @@ def suspicious_tiers(leaderboard, estimator, ratio=WEAK_SIGNAL_RATIO):
     return flagged
 
 
+def _entry(entry):
+    if isinstance(entry, dict):
+        return int(entry["digits"]), entry.get("minute")
+    return int(entry), None
+
+
 def load_leaderboard(path="state.json"):
     """{participante: [(dígitos, minuto o None), ...]} desde state.json.
 
-    `leaderboard` es una lista de participantes (sin nombres: se numeran
-    "rival 1", "rival 2"...), cada uno con las longitudes que muestra el
-    marcador; o, si se prefiere, un objeto {nombre: [...]}. Cada longitud
-    puede ser un entero o {"digits": d, "minute": m}. Sin archivo o sin
-    marcador, {}."""
+    `leaderboard` es el top tal como lo muestra el marcador: una lista con
+    el máximo de dígitos de cada participante, p.ej. [120, 110, 110, 95].
+    Cada valor puede ser un entero o {"digits": d, "minute": m} (minuto del
+    CTF en que lo rompió). También se aceptan, si algún día el marcador da
+    más, una lista por participante o un objeto {nombre: [...]}. Sin archivo
+    o sin marcador, {}."""
     try:
         with open(path) as f:
             raw = json.load(f).get("leaderboard", {})
     except (OSError, ValueError, AttributeError):
         return {}
     if isinstance(raw, list):
-        raw = {f"rival {i}": entries for i, entries in enumerate(raw, 1)}
-    board = {}
-    for team, entries in raw.items():
-        parsed = []
-        for entry in entries:
-            if isinstance(entry, dict):
-                parsed.append((int(entry["digits"]), entry.get("minute")))
-            else:
-                parsed.append((int(entry), None))
-        board[team] = parsed
-    return board
+        raw = {f"rival {i}": entries if isinstance(entries, list) else [entries]
+               for i, entries in enumerate(raw, 1)}
+    return {team: [_entry(e) for e in entries] for team, entries in raw.items()}
 
 
 def rival_vectors(leaderboard):

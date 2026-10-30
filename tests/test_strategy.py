@@ -13,7 +13,7 @@ def test_standing_ordena_de_mayor_a_menor():
 @pytest.mark.parametrize("ours,theirs,expected", [
     ((120,), (110, 105, 100), +1),       # el más largo manda
     ((120, 95), (120, 90), +1),          # empate -> siguiente número
-    ((120, 90), (120,), +1),             # tener un número más desempata
+    ((120, 90), (120,), 0),              # del rival solo se ve su máximo: lo demás, desconocido
     ((110,), (120,), -1),
     ((120, 100), (120, 100), 0),         # empate exacto -> tiempo (desconocido)
     # El rival enseña 3 y coincidimos en ellas: lo que tenga detrás no se ve
@@ -104,3 +104,24 @@ def test_load_leaderboard_lista_sin_nombres(tmp_path):
     path.write_text(json.dumps({"leaderboard": [[120, 95], [{"digits": 110, "minute": 4}]]}))
     board = st.load_leaderboard(str(path))
     assert board == {"rival 1": [(120, None), (95, None)], "rival 2": [(110, 4)]}
+
+
+# ----------------------- top con el máximo de cada participante -----------------------
+
+def test_load_leaderboard_top_plano(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"leaderboard": [120, {"digits": 110, "minute": 4}, 110, 95]}))
+    board = st.load_leaderboard(str(path))
+    assert board == {"rival 1": [(120, None)], "rival 2": [(110, 4)],
+                     "rival 3": [(110, None)], "rival 4": [(95, None)]}
+    assert sorted(st.rival_vectors(board).values(), reverse=True) == [(120,), (110,), (110,), (95,)]
+
+def test_con_el_top_hay_que_superar_el_maximo():
+    # Empatar el máximo del primero no basta para ganarle (no se ve lo de detrás).
+    assert st.compare((120, 110), (120,)) == 0
+    assert st.needed_to_beat([], (120,)) == 121
+    assert st.needed_to_beat([115], (120,)) == 121
+    top = [(120,), (110,), (110,), (95,)]
+    assert st.rank((121,), top) == 1.0
+    assert st.rank((115,), top) == 2.0
+    assert st.rank((110,), top) == pytest.approx(3.0)       # 1 por delante + 2 empates a medias

@@ -136,20 +136,16 @@ python -m scripts.smoke_workers    # arranca, redimensiona y para ECM, YAFU y CA
    de `state.json` (se descuenta lo que haya pasado desde que lo guardaste), o el valor
    por defecto de `config/settings.toml` (60 min).
 3. **Marcador** (opcional, pero es lo que permite decidir contra quién compites): copia
-   en `state.json` las longitudes que el marcador muestra de cada participante, una lista
-   por participante (sin nombres):
+   en `state.json` el top tal como aparece, **el máximo de dígitos que ha sacado cada
+   participante**, uno por participante:
    ```json
-   {
-     "leaderboard": [
-       [120, 95, 90],
-       [{"digits": 110, "minute": 12}, 100]
-     ]
-   }
+   {"leaderboard": [120, 110, 110, 95]}
    ```
-   Tus propias longitudes no hacen falta: salen de lo que ya has resuelto. El minuto del
-   CTF en que lo rompió (`minute`) es opcional y activa la señal de "en ese grupo hay un
-   número débil" ([6.6](#66-qué-atacar-la-estrategia)). Se relee cada vez que se decide
-   qué atacar, así que basta con actualizarlo cuando cambie el marcador. Si no cumple
+   Cuando cambie el top, actualiza la lista: se relee cada vez que se decide qué atacar.
+   Tus propias longitudes no hacen falta, porque salen de lo que ya has resuelto. Si
+   anotas también el minuto del CTF en que salió un valor, `{"digits": 110, "minute":
+   12}`, se activa la señal de "en ese tamaño hay un número débil"
+   ([6.6](#66-qué-atacar-la-estrategia)). Si no cumple
    `config/state_schema.json`, el observador registra un error en el log.
 4. **Lanza**:
    ```bash
@@ -173,9 +169,9 @@ En el log verás el razonamiento de cada decisión:
 
 ```
 [estrategia] Tu marcador: (80,); puesto esperado 2.0 de 2.
-[estrategia] Para superar a rival (80, 70) necesitas romper al menos un número de 71 dígitos.
-[estrategia]   79 dígitos ×1: ~1 min, P(terminar)=1.00, puestos +1.00
-[estrategia]   70 dígitos ×3: ~0 min, P(terminar)=1.00, puestos +0.50
+[estrategia] Para superar a rival 1 (95,) necesitas romper al menos un número de 96 dígitos.
+[estrategia]   100 dígitos ×10: ~20 min, P(terminar)=0.97, puestos +1.00
+[estrategia]   90 dígitos ×10: ~6 min, P(terminar)=1.00, puestos +0.00
 ```
 
 **Qué hay en `runtime/`** (no versionado):
@@ -384,10 +380,10 @@ por romper:
 
 $$U(d) = P(T_d \le t_{\text{restante}}) \cdot \big(\text{puesto actual} - \text{puesto si rompes } d\big)$$
 
-- **Puesto.** 1 más el número de rivales cuyo vector supera al tuyo. Un empate exacto
-  cuenta como medio puesto, porque lo decide el tiempo y no sabemos quién llegó antes. El
-  marcador solo enseña las 2–3 mayores longitudes de cada rival: si coincides en ellas,
-  lo de detrás no se ve y también cuenta como empate.
+- **Puesto.** 1 más el número de rivales cuyo vector supera al tuyo. Un empate cuenta
+  como medio puesto. De cada rival el marcador solo enseña su máximo: si empatas con él,
+  no se sabe quién gana el desempate (su siguiente número no se ve), así que **para
+  superar a alguien con seguridad necesitas un número más largo que su máximo**.
 - **Probabilidad de terminar.** El tiempo real se modela como log-normal alrededor de la
   estimación del modelo de coste, con σ = 0,3 en ln T (el error medido es de hasta ~30%):
 
