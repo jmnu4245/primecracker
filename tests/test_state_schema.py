@@ -21,13 +21,19 @@ class TestStateSchema(unittest.TestCase):
         except ValidationError:
             self.fail("validate() falló con un state.json válido.")
 
-    def test_invalid_state_missing_required(self):
-        invalid_instance = {
-            "our_score": 150,
-            "time_remaining_seconds": 7200
-        }
-        with self.assertRaises(ValidationError):
-            validate(instance=invalid_instance, schema=self.schema)
+    def test_estado_minimo_con_marcador_es_valido(self):
+        # Sin puntos (el CTF no los tiene): solo tiempo y marcador.
+        validate(instance={"time_remaining_seconds": 7200,
+                           "leaderboard": {"a": [120, 95], "b": [{"digits": 110, "minute": 12}]}},
+                 schema=self.schema)
+        validate(instance={}, schema=self.schema)
+
+    def test_marcador_mal_formado(self):
+        for bad in ({"leaderboard": {"a": ["120"]}},
+                    {"leaderboard": {"a": [{"minute": 3}]}},
+                    {"leaderboard": {"a": [0]}}):
+            with self.assertRaises(ValidationError):
+                validate(instance=bad, schema=self.schema)
 
     def test_invalid_state_wrong_type(self):
         invalid_instance = {

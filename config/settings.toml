@@ -27,6 +27,10 @@
 # cpu_headroom_pct = 85.0
 # d_safe_bits = 330
 
+# Qué optimizar: "longest" (gana el número más largo roto; ver
+# orchestrator/strategy.py) o "count" (cuantos más números mejor)
+# strategy = "longest"
+
 # Elección de método y reparto del tiempo
 # gnfs_min_digits = 93          # desde aquí GNFS en vez de YAFU (cruce medido)
 # total_minutes = 60            # sin --minutes ni time_remaining_seconds en state.json

@@ -29,3 +29,6 @@ prueba.py
 # Resultados de benchmark locales (opcional: coméntalo si quieres versionarlos)
 # benchmark_results.csv
 .pytest_cache/
+
+# Calibración de esta máquina (benchmark/machine.py)
+config/machine.json

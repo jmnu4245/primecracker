@@ -12,6 +12,7 @@ import tomllib
 from dataclasses import dataclass, fields, replace
 
 SETTINGS_PATH = os.path.join("config", "settings.toml")
+STRATEGIES = ("longest", "count")
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,13 @@ class Settings:
     cpu_headroom_pct: float = 85.0
     d_safe_bits: int = 330
 
+    # Qué optimizar:
+    # - "longest": gana quien rompe el número más largo (empate: el
+    #   siguiente; empate en todo: el tiempo). Planificador en
+    #   orchestrator/strategy.py, con el marcador de state.json.
+    # - "count": cuantos más números mejor; de menor a mayor coste.
+    strategy: str = "longest"
+
     # Elección de método y reparto del tiempo
     # Desde aquí GNFS en vez de YAFU (SIQS). 93 = cruce medido en este equipo
     # (benchmark_results.csv, 12 hilos): a 90 dígitos YAFU 253s / CADO 310s,
@@ -83,7 +91,10 @@ def load(path=SETTINGS_PATH):
     if unknown:
         raise ValueError(f"{path}: claves desconocidas {sorted(unknown)}; "
                          f"válidas: {sorted(known)}")
-    return replace(Settings(), **data)
+    settings = replace(Settings(), **data)
+    if settings.strategy not in STRATEGIES:
+        raise ValueError(f"{path}: strategy = {settings.strategy!r}; válidas: {STRATEGIES}")
+    return settings
 
 
 SETTINGS = load()

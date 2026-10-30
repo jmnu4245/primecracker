@@ -148,9 +148,12 @@ def fake_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(benchmark.predict_cost, "predict", lambda d, method: (100.0, 1.0))
     monkeypatch.setattr(workers.ecm_worker, "ECMWorker", _Fake)
     monkeypatch.setattr(main, "make_anchor_worker", lambda t: _Fake())
+    # Las pasadas de menor a mayor son la estrategia "count".
+    from dataclasses import replace
+    monkeypatch.setattr(main, "SETTINGS", replace(main.SETTINGS, strategy="count"))
     calls = []
     def install(answers):
-        def fake_attack(target, cfg, anchor, ecm, loop, budget):
+        def fake_attack(target, cfg, anchor, ecm, loop, budget, **kw):
             calls.append(target)
             return answers.get(target)
         monkeypatch.setattr(main, "attack_target", fake_attack)
@@ -194,3 +197,92 @@ def test_flush_registra_lo_escrito_justo_antes_del_apagado(tmp_path, monkeypatch
         json.dumps({"n": "30", "factors": ["2", "3", "5"], "method": "Combinado"}))
     main.flush_pending_results()
     assert "N (2 dígitos) = 30" in (tmp_path / "runtime" / "para_entregar.txt").read_text()
+
+
+
+# ----------------------- estrategia "longest" -----------------------
+
+@pytest.fixture
+def longest(tmp_path, monkeypatch):
+    """run_longest con workers simulados: `answers` dice qué factores da
+    el ataque a cada número (None = no termina), `weak` qué números caen
+    en la caza con ECM, y `minutes_for` el coste estimado por tamaño."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "runtime").mkdir()
+    from dataclasses import replace
+    monkeypatch.setattr(main, "SETTINGS", replace(main.SETTINGS, strategy="longest"))
+    import workers.ecm_worker
+    monkeypatch.setattr(workers.ecm_worker, "ECMWorker", _Fake)
+    monkeypatch.setattr(main, "make_anchor_worker", lambda t: _Fake())
+    log = {"attack": [], "hunt": []}
+
+    def setup(answers, weak=(), minutes_for=None, leaderboard=None):
+        if leaderboard is not None:
+            (tmp_path / "state.json").write_text(json.dumps({"leaderboard": leaderboard}))
+        def fake_attack(target, cfg, anchor, ecm, loop, budget, **kw):
+            log["attack"].append(target)
+            return answers.get(target)
+        def fake_pretest(target, ecm_worker, threads, max_seconds):
+            log["hunt"].append(target)
+            return answers.get(target) if target in weak else None
+        monkeypatch.setattr(main, "attack_target", fake_attack)
+        monkeypatch.setattr(main, "ecm_pretest", fake_pretest)
+        table = minutes_for or {}
+        return lambda digits, method: (table.get(digits, 1) * 60, 1.0)
+    return tmp_path, setup, log
+
+def _prime_after(x):
+    from workers.quick_factor import is_probable_prime
+    while not is_probable_prime(x):
+        x += 1
+    return x
+
+def n_digits(d, k):
+    """k-ésimo número de prueba de d dígitos: 2 × q con q primo."""
+    return 2 * _prime_after(5 * 10 ** (d - 2) + 1000 * k)
+
+def answer(n):
+    """Factorización en primos de un número de n_digits."""
+    return [2, n // 2]
+
+def test_longest_ataca_primero_el_tamano_mayor_que_cabe(longest):
+    tmp_path, setup, log = longest
+    small, big = n_digits(80, 1), n_digits(100, 1)
+    predictor = setup({small: answer(small), big: answer(big)}, minutes_for={80: 1, 100: 10})
+    camp = main.Campaign(3600)
+    main.run_longest(camp, [small, big], predictor)
+    assert log["attack"][0] == big            # el de 100 antes que el de 80
+
+def test_longest_caza_el_debil_del_grupo_antes_de_gnfs(longest):
+    tmp_path, setup, log = longest
+    group = [n_digits(100, k) for k in range(1, 6)]
+    weak = group[3]
+    # GNFS a 100 dígitos: 300 min estimados; cazar 5 × 2 min compensa.
+    predictor = setup({weak: answer(weak)}, weak={weak}, minutes_for={100: 300})
+    camp = main.Campaign(10 * 3600)
+    solved = main.run_longest(camp, group, predictor)
+    assert log["hunt"] == group               # pretest a todos los del grupo
+    assert weak in solved
+    assert weak not in log["attack"][:1]       # no hizo falta GNFS para el débil
+
+def test_longest_descarta_un_tamano_que_no_termina(longest):
+    tmp_path, setup, log = longest
+    big = [n_digits(120, k) for k in range(1, 3)]
+    small = n_digits(90, 1)
+    predictor = setup({small: answer(small)}, minutes_for={120: 30, 90: 5})
+    camp = main.Campaign(3 * 3600)
+    solved = main.run_longest(camp, big + [small], predictor)
+    # Intenta un 120 una vez; al no terminar, no prueba el otro 120 y pasa al 90.
+    assert sum(t in big for t in log["attack"]) == 1
+    assert small in solved
+
+def test_longest_no_gasta_en_lo_que_no_mejora_el_puesto(longest):
+    tmp_path, setup, log = longest
+    a100, a110 = n_digits(100, 1), n_digits(110, 1)
+    # Ya tienes un 100 roto; el rival tiene (110, 95). Otro 100 no sirve;
+    # un 110 te deja en (110, 100) > (110, 95).
+    predictor = setup({a100: answer(a100), a110: answer(a110)},
+                      minutes_for={100: 5, 110: 20}, leaderboard={"rival": [110, 95]})
+    camp = main.Campaign(3600)
+    main.run_longest(camp, [a100, a110], predictor, already_solved=[n_digits(100, 9)])
+    assert log["attack"][0] == a110
