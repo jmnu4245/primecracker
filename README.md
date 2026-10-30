@@ -136,13 +136,14 @@ python -m scripts.smoke_workers    # arranca, redimensiona y para ECM, YAFU y CA
    de `state.json` (se descuenta lo que haya pasado desde que lo guardaste), o el valor
    por defecto de `config/settings.toml` (60 min).
 3. **Marcador** (opcional, pero es lo que permite decidir contra quién compites): copia
-   en `state.json` las longitudes que el marcador muestra de cada rival:
+   en `state.json` las longitudes que el marcador muestra de cada participante, una lista
+   por participante (sin nombres):
    ```json
    {
-     "leaderboard": {
-       "equipo_a": [120, 95, 90],
-       "equipo_b": [{"digits": 110, "minute": 12}, 100]
-     }
+     "leaderboard": [
+       [120, 95, 90],
+       [{"digits": 110, "minute": 12}, 100]
+     ]
    }
    ```
    Tus propias longitudes no hacen falta: salen de lo que ya has resuelto. El minuto del
@@ -370,7 +371,7 @@ Por debajo de 93 dígitos no hay pretest propio: `factor()` de YAFU ya hace el s
 
 **Las reglas del CTF.** Gana quien rompe el número más largo; si hay empate, el
 siguiente más largo, y así sucesivamente; con empate en todo, quien llegó antes. Así que
-cada equipo es un **vector de longitudes rotas ordenado de mayor a menor**, comparado
+cada participante es un **vector de longitudes rotas ordenado de mayor a menor**, comparado
 **lexicográficamente**:
 
 $$(120, 95) \succ (120, 90) \succ (120) \succ (110, 105, 100)$$
@@ -575,7 +576,7 @@ El código usa vocabulario de competición. Significa esto y solo esto:
 |---|---|
 | `target` / objetivo | Un entero de reto de `data/target_numbers.txt` |
 | ancla | El factorizador principal de un objetivo: YAFU o CADO-NFS |
-| `enemy` / rival | El otro equipo **en el marcador del CTF**. Nunca una máquina ni una persona |
+| `enemy` / rival | Otro participante **en el marcador del CTF** (sin nombre). Nunca una máquina ni una persona a atacar |
 | `scoreboard` | El marcador de la competición (`state.json`, editado a mano) |
 | `vulnerability_sweep` | Barrido de **debilidades matemáticas** del propio número de reto |
 | `attack` / atacar | Lanzar los factorizadores contra un número de reto |

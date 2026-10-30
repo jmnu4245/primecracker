@@ -6,9 +6,10 @@ Qué atacar, según las reglas del CTF:
 - Gana quien rompe el número MÁS LARGO; si hay empate, se mira el
   siguiente más largo, y así sucesivamente; con empate en todos, gana
   quien llegó antes.
-- El marcador muestra de cada equipo sus 2-3 longitudes mayores.
+- El marcador muestra de cada participante (sin nombre) sus 2-3
+  longitudes mayores.
 
-Es decir, cada equipo es un vector de longitudes rotas ordenado de mayor a
+Es decir, cada participante es un vector de longitudes rotas ordenado de mayor a
 menor, comparado lexicográficamente ((120, 95) > (120, 90) > (120,)). Con
 eso, para cada tamaño de número que queda por romper:
 
@@ -25,7 +26,7 @@ import json
 import math
 from dataclasses import dataclass
 
-# El marcador muestra hasta este número de longitudes por equipo. Si un
+# El marcador muestra hasta este número de longitudes por participante. Si un
 # rival enseña SHOWN y coincidimos en ellas, lo que tenga detrás no se ve.
 SHOWN = 3
 # Error del modelo de coste medido en el benchmark (hasta ~30%): sigma de
@@ -38,7 +39,7 @@ WEAK_SIGNAL_RATIO = 0.1
 
 
 def standing(lengths):
-    """Vector de un equipo: longitudes rotas de mayor a menor."""
+    """Vector de un participante: longitudes rotas de mayor a menor."""
     return tuple(sorted((int(d) for d in lengths), reverse=True))
 
 
@@ -137,14 +138,20 @@ def suspicious_tiers(leaderboard, estimator, ratio=WEAK_SIGNAL_RATIO):
 
 
 def load_leaderboard(path="state.json"):
-    """{equipo: [(dígitos, minuto o None), ...]} desde state.json. Cada
-    entrada puede ser un entero o {"digits": d, "minute": m}. Sin archivo o
-    sin marcador, {}."""
+    """{participante: [(dígitos, minuto o None), ...]} desde state.json.
+
+    `leaderboard` es una lista de participantes (sin nombres: se numeran
+    "rival 1", "rival 2"...), cada uno con las longitudes que muestra el
+    marcador; o, si se prefiere, un objeto {nombre: [...]}. Cada longitud
+    puede ser un entero o {"digits": d, "minute": m}. Sin archivo o sin
+    marcador, {}."""
     try:
         with open(path) as f:
             raw = json.load(f).get("leaderboard", {})
     except (OSError, ValueError, AttributeError):
         return {}
+    if isinstance(raw, list):
+        raw = {f"rival {i}": entries for i, entries in enumerate(raw, 1)}
     board = {}
     for team, entries in raw.items():
         parsed = []

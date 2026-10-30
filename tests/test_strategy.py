@@ -98,3 +98,9 @@ def test_suspicious_tiers():
              "b": [(100, 15)],           # tiempo normal
              "c": [(100, None)]}         # sin minuto: no aporta
     assert st.suspicious_tiers(board, est) == {110}
+
+def test_load_leaderboard_lista_sin_nombres(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"leaderboard": [[120, 95], [{"digits": 110, "minute": 4}]]}))
+    board = st.load_leaderboard(str(path))
+    assert board == {"rival 1": [(120, None), (95, None)], "rival 2": [(110, 4)]}
